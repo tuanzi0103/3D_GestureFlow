@@ -1,0 +1,1491 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D 粒子手势交互系统 v2.1 - 双指旋钮操控版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.154.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.154.0/examples/jsm/"
+            }
+        }
+    </script>
+    <!-- MediaPipe Hands -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #020205; font-family: 'Segoe UI', sans-serif; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        #video-element { display: none; }
+        
+        .glass-panel {
+            background: rgba(10, 10, 20, 0.7);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+        }
+
+        .control-btn {
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+        .control-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+            transform: translateY(-2px);
+            box-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
+        }
+        .control-btn.active {
+            background: linear-gradient(135deg, rgba(100, 200, 255, 0.4), rgba(100, 200, 255, 0.1));
+            border: 1px solid rgba(100, 200, 255, 0.5);
+            box-shadow: 0 0 25px rgba(79, 209, 197, 0.3);
+            text-shadow: 0 0 8px rgba(255,255,255,0.8);
+        }
+
+        .loader {
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-left-color: #00ffff;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 0.8s cubic-bezier(0.5, 0.1, 0.5, 0.9) infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        .custom-scroll::-webkit-scrollbar { height: 4px; }
+        .custom-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); border-radius: 4px; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
+        .custom-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); }
+        
+        .mode-item { transition: all 0.2s ease; opacity: 0.4; transform: scale(0.95); font-weight: normal; }
+        .mode-item.active { opacity: 1; transform: scale(1.0); color: #22d3ee; font-weight: bold; text-shadow: 0 0 10px rgba(34, 211, 238, 0.4); }
+
+        /* ── Card Showcase ── */
+        #dim-overlay {
+            position: fixed; inset: 0; z-index: 18;
+            background: rgba(0,0,0,0); pointer-events: none;
+            transition: background 0.6s ease;
+        }
+        #dim-overlay.active { background: rgba(0,0,0,0.7); }
+
+        #card-overlay {
+            position: fixed; inset: 0; z-index: 19;
+            display: flex; align-items: center; justify-content: center;
+            pointer-events: none;
+            opacity: 0; transition: opacity 1s ease;
+        }
+        #card-overlay.visible { opacity: 1; }
+
+        .card-spread {
+            position: relative;
+            width: 100%; height: 420px;
+            perspective: 900px;
+            perspective-origin: 50% 50%;
+            transform-style: preserve-3d;
+        }
+
+        .photo-card {
+            position: absolute; left: 50%; top: 50%;
+            border-radius: 9px; overflow: visible;
+            background: transparent;
+            transform-style: preserve-3d;
+            scale: 1;
+            transition: scale 0.45s cubic-bezier(0.34, 1.56, 0.64, 1); /* spring-like grab animation */
+        }
+        /* Flip wrapper: rotates between back(0°) and front(180°)
+           Shadow lives HERE so it follows the flip rotation          */
+        .photo-card-flipper {
+            position: relative;
+            transform-style: preserve-3d;
+            transition: transform 1.2s ease;   /* ← flip speed: change 1.2s */
+            border-radius: 9px;
+            /* K-pop photocard thin-card feel */
+            box-shadow:
+                0 1px 0 1px rgba(210,210,210,0.8),
+                0 2px 0 2px rgba(180,180,180,0.4),
+                0 6px 16px rgba(0,0,0,0.45),
+                0 12px 30px rgba(0,0,0,0.22);
+        }
+        /* Motion trail — positioned with transform to avoid layout recalc */
+        .card-trail {
+            position: absolute;
+            top: 4px; bottom: 4px;
+            left: 0;
+            border-radius: 6px;
+            pointer-events: none;
+            background: linear-gradient(to left, transparent, rgba(255,255,255,0.18));
+            will-change: transform, width;
+        }
+        .photo-card-flipper.flipped { transform: rotateY(180deg); }
+
+        /* Back face: white card (or custom back image) */
+        .photo-card-back {
+            position: absolute; inset: 0;
+            border-radius: 9px;
+            background: #fff;
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
+        }
+        /* Front face: pre-rotated 180° so it shows correctly when flipper is at 180° */
+        .photo-card-inner {
+            border-radius: 9px; overflow: hidden;
+            width: 100%; height: 100%; position: relative;
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
+            transform: rotateY(180deg);
+        }
+        .photo-card-inner img { display: block; width: 100%; height: 100%; object-fit: cover; }
+        /* Glossy sheen */
+        .photo-card-inner::after {
+            content: ''; position: absolute; inset: 0; border-radius: 9px;
+            background: linear-gradient(135deg,
+                rgba(255,255,255,0.28) 0%,
+                rgba(255,255,255,0.06) 40%,
+                transparent 60%,
+                rgba(0,0,0,0.03) 100%);
+            pointer-events: none;
+        }
+
+        /* Back graph submenu */
+        #back-submenu {
+            position: absolute; bottom: calc(100% + 6px); left: 0;
+            display: flex; flex-direction: column; gap: 4px;
+            opacity: 0; pointer-events: none;
+            transition: opacity 0.2s ease; white-space: nowrap;
+        }
+        #back-submenu.open { opacity: 1; pointer-events: auto; }
+
+        /* Music panel */
+        #music-panel {
+            position: absolute; bottom: calc(100% + 6px); left: 0;
+            width: 220px;
+            background: rgba(10,10,20,0.92); border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px; padding: 10px 8px 8px;
+            opacity: 0; pointer-events: none;
+            transition: opacity 0.2s ease;
+            backdrop-filter: blur(12px);
+        }
+        #music-panel.open { opacity: 1; pointer-events: auto; }
+        #music-list { max-height: 180px; overflow-y: auto; margin-bottom: 8px; }
+        #music-list::-webkit-scrollbar { width: 3px; }
+        #music-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+        .music-item {
+            display: flex; align-items: center; gap: 6px;
+            padding: 5px 6px; border-radius: 7px; cursor: pointer;
+            transition: background 0.15s;
+        }
+        .music-item:hover { background: rgba(255,255,255,0.08); }
+        .music-item.playing { background: rgba(0,220,255,0.12); }
+        .music-item-name {
+            font-family: monospace; font-size: 9px; color: #ccc;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1;
+        }
+        .music-item.playing .music-item-name { color: #4de8ff; }
+        .music-controls {
+            display: flex; align-items: center; gap: 6px;
+            padding: 4px 2px 0; border-top: 1px solid rgba(255,255,255,0.07);
+        }
+        .music-ctrl-btn {
+            background: none; border: none; color: rgba(255,255,255,0.6);
+            cursor: pointer; font-size: 13px; padding: 2px 4px;
+            transition: color 0.15s;
+        }
+        .music-ctrl-btn:hover { color: #4de8ff; }
+        #music-progress-wrap {
+            flex: 1; height: 3px; background: rgba(255,255,255,0.12);
+            border-radius: 2px; cursor: pointer; position: relative;
+        }
+        #music-progress-bar {
+            height: 100%; background: #4de8ff; border-radius: 2px;
+            width: 0%; transition: width 0.3s linear; pointer-events: none;
+        }
+        #music-now-playing {
+            font-family: monospace; font-size: 8px; color: rgba(255,255,255,0.4);
+            text-align: center; padding: 4px 4px 0;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+    <video id="video-element" playsinline></video>
+
+    <!-- Background dim overlay -->
+    <div id="dim-overlay"></div>
+    <!-- Card showcase overlay -->
+    <div id="card-overlay">
+        <div class="card-spread" id="card-spread"></div>
+    </div>
+
+    <!-- Loading -->
+    <div id="loader-overlay" class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black bg-opacity-95 transition-opacity duration-700">
+        <div class="loader mb-6 shadow-[0_0_30px_rgba(0,255,255,0.3)]"></div>
+        <div class="text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 to-blue-500 text-2xl font-bold tracking-widest uppercase">Visual Core</div>
+        <div class="text-gray-500 text-xs mt-3 tracking-widest">INITIALIZING PARTICLE ENGINE v2.1</div>
+    </div>
+
+    <!-- UI -->
+    <div id="ui-overlay" class="absolute top-0 left-0 w-full h-full pointer-events-none z-10 p-4 md:p-8 flex flex-col justify-between">
+        <div class="flex justify-between items-start pointer-events-auto">
+            <div class="glass-panel p-5 animate-fade-in-down transform transition-all hover:scale-105 duration-500">
+                <h1 class="text-white text-2xl font-bold tracking-tight mb-2 drop-shadow-[0_0_10px_rgba(255,255,255,0.3)]">云熠 · 星河 <span class="text-xs text-cyan-400 align-top">v1.0</span></h1>
+                <div class="flex items-center gap-3 bg-black/30 rounded-full px-3 py-1 w-fit border border-white/5">
+                    <div id="status-dot" class="w-2 h-2 rounded-full bg-red-500 transition-all duration-500 shadow-[0_0_10px_red]"></div>
+                    <span id="status-text" class="text-[10px] text-gray-300 font-mono uppercase tracking-wider">System Offline</span>
+                </div>
+                <div class="text-[10px] text-gray-400 mt-3 font-mono border-t border-white/10 pt-2 flex flex-col gap-1">
+                    <div id="mode-scale" class="mode-item">👋 五指张合: 缩放</div>
+                    <div id="mode-rotate" class="mode-item">☝️ 食指滑动: 视角旋转 (锁定缩放)</div>
+                    <div id="mode-roll" class="mode-item">✌️ 双指旋转: 浏览照片</div>
+                </div>
+            </div>
+            
+            <button onclick="toggleFullScreen()" class="glass-panel p-4 text-white hover:text-cyan-300 control-btn rounded-full group">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 group-hover:scale-110 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                </svg>
+            </button>
+        </div>
+
+        <div class="pointer-events-auto flex flex-col md:flex-row gap-6 items-end md:items-center justify-between w-full">
+            <!-- Bottom-left: Photo buttons -->
+            <div class="flex items-end gap-3">
+                <input type="file" id="add-photo-input" multiple accept="image/*" style="display:none">
+                <input type="file" id="back-portrait-input" accept="image/*" style="display:none">
+                <input type="file" id="back-landscape-input" accept="image/*" style="display:none">
+                <button onclick="document.getElementById('add-photo-input').click()" class="glass-panel control-btn text-white text-[10px] px-4 py-2 rounded-xl font-mono tracking-wider uppercase">Add Photo</button>
+                <div class="relative">
+                    <div id="back-submenu">
+                        <button onclick="document.getElementById('back-portrait-input').click()" class="glass-panel control-btn text-white text-[10px] px-3 py-2 rounded-lg w-full text-left font-mono tracking-wider">Portrait Back</button>
+                        <button onclick="document.getElementById('back-landscape-input').click()" class="glass-panel control-btn text-white text-[10px] px-3 py-2 rounded-lg w-full text-left font-mono tracking-wider">Landscape Back</button>
+                    </div>
+                    <button id="back-graph-btn" onclick="toggleBackMenu()" class="glass-panel control-btn text-white text-[10px] px-4 py-2 rounded-xl font-mono tracking-wider uppercase">Back</button>
+                </div>
+                <!-- Music -->
+                <div class="relative">
+                    <input type="file" id="music-input" multiple accept="audio/*,video/mp4,.m4a,.mp4,.mov" style="display:none">
+                    <div id="music-panel">
+                        <div id="music-now-playing">— no track —</div>
+                        <div id="music-list"></div>
+                        <div class="music-controls">
+                            <button class="music-ctrl-btn" onclick="musicPrev()">⏮</button>
+                            <button class="music-ctrl-btn" id="music-play-btn" onclick="musicToggle()">▶</button>
+                            <button class="music-ctrl-btn" onclick="musicNext()">⏭</button>
+                            <div id="music-progress-wrap" onclick="musicSeek(event)">
+                                <div id="music-progress-bar"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <button id="music-btn" onclick="toggleMusicPanel()" class="glass-panel control-btn text-white text-[10px] px-4 py-2 rounded-xl font-mono tracking-wider uppercase">Music</button>
+                </div>
+            </div>
+            <!-- Bottom-right: Color picker (unchanged) -->
+            <div class="glass-panel p-4 flex items-center gap-4 hover:bg-white/10 transition-colors">
+                <span class="text-white text-xs font-mono tracking-wider uppercase opacity-70">Emission Color</span>
+                <div class="relative w-8 h-8 rounded-full overflow-hidden ring-2 ring-white/20 hover:ring-cyan-400 transition-all">
+                    <input type="color" id="color-picker" value="#00ffff" class="absolute -top-1/2 -left-1/2 w-[200%] h-[200%] cursor-pointer p-0 m-0 border-0" onchange="updateColor(this.value)">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+        // --- Configuration ---
+        const PARTICLE_COUNT = 58500;  // ×1.3 density (was 45000)
+        const PARTICLE_SIZE = 0.20;   // was 0.18
+        
+        // State
+        let scene, camera, renderer, composer, particles, controls;
+        let photoParticleGroup = null;
+        // Pre-allocated objects for photo drift animation (avoid GC each frame)
+        let _photoDriftAngle = 0;
+        const _photoDriftAxis = new THREE.Vector3(0.3, 1, 0.2).normalize();
+        const _photoDriftQ    = new THREE.Quaternion();
+        let targetPositions = []; 
+        let targetColors = []; 
+        let handInfluence = 0; 
+        let isHandDetected = false;
+        let clock = new THREE.Clock();
+
+        // Color State
+        let userBaseColor = new THREE.Color(0x00ffff); 
+
+        // 旋转交互变量
+        let previousFingerPos = { x: 0, y: 0 };
+        let smoothedFingerPos = { x: 0, y: 0 }; 
+        let rotationVelocity = { x: 0, y: 0, z: 0 }; 
+        let isTrackingRotation = false; 
+        
+        // 【新增】双指旋钮交互变量
+        let isTrackingRoll = false;
+        let smoothedIndexTip = { x: 0, y: 0 };
+        let smoothedMiddleTip = { x: 0, y: 0 };
+        let previousRollAngle = 0;
+
+        // 缩放交互变量
+        let currentGestureMode = 'none'; 
+        
+        // 模式锁定与信号防抖
+        let currentStableMode = 'scale'; 
+        let modeFrameCounter = 0; 
+        let lastTimeHandDetected = 0; 
+        
+        async function init() {
+            // 1. Scene & Camera
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x020205, 0.02);
+
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 30;
+            camera.position.y = 0;
+
+            // 2. Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: "high-performance" });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); 
+            renderer.toneMapping = THREE.ReinhardToneMapping;
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            // 3. Post Processing (BLOOM)
+            const renderScene = new RenderPass(scene, camera);
+            const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+            bloomPass.threshold = 0.05; 
+            bloomPass.strength = 2.2;
+            bloomPass.radius = 0.6;     
+
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderScene);
+            composer.addPass(bloomPass);
+
+            // 4. Controls
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.autoRotate = true;
+            controls.autoRotateSpeed = 0.5;
+            controls.enableZoom = true;
+            controls.minDistance = 2;    // 允许相机穿进外层，内层球体r≈3，设2可完全掠过外层
+            controls.maxDistance = 120;  // 拉远上限
+
+            // 5. Build World
+            createParticles();
+            buildPhotoParticles();   // init inner sphere as wind-blown card shapes immediately
+            await loadLocalAssets(); // auto-load photos / music / backgraph from server folders
+            await setupMediaPipe();
+
+            window.addEventListener('resize', onWindowResize);
+            animate();
+        }
+
+        function createParticles() {
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(PARTICLE_COUNT * 3);
+            const colors = new Float32Array(PARTICLE_COUNT * 3);
+
+            const sphere = getShapePositions();
+            const initialColors = getShapeColors();
+            
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                positions[i * 3] = sphere[i * 3];
+                positions[i * 3 + 1] = sphere[i * 3 + 1];
+                positions[i * 3 + 2] = sphere[i * 3 + 2];
+
+                colors[i * 3] = initialColors[i * 3];
+                colors[i * 3 + 1] = initialColors[i * 3 + 1];
+                colors[i * 3 + 2] = initialColors[i * 3 + 2];
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            
+            const sprite = createParticleTexture();
+
+            const material = new THREE.PointsMaterial({
+                size: PARTICLE_SIZE,
+                map: sprite,
+                color: userBaseColor, 
+                transparent: true,
+                opacity: 1.0,
+                blending: THREE.AdditiveBlending, 
+                depthWrite: false,
+                sizeAttenuation: true,
+                vertexColors: true
+            });
+
+            particles = new THREE.Points(geometry, material);
+            scene.add(particles);
+            
+            targetPositions = Float32Array.from(sphere);
+            targetColors = Float32Array.from(initialColors); 
+        }
+
+        function createParticleTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64; canvas.height = 64;
+            const context = canvas.getContext('2d');
+            context.clearRect(0, 0, 64, 64);
+            context.save();
+            context.translate(32, 34);
+            context.scale(1.0, 1.0);
+            context.beginPath();
+            context.moveTo(0, 12);
+            context.bezierCurveTo(0, 2, -16, 0, -16, -10);
+            context.bezierCurveTo(-16, -22, -2, -22, 0, -12);
+            context.bezierCurveTo(2, -22, 16, -22, 16, -10);
+            context.bezierCurveTo(16, 0, 0, 2, 0, 12);
+            context.closePath();
+            const gradient = context.createRadialGradient(0, -4, 2, 0, -4, 20);
+            gradient.addColorStop(0, 'rgba(255,255,255,1)');
+            gradient.addColorStop(0.45, 'rgba(255,105,135,0.95)');
+            gradient.addColorStop(1, 'rgba(255,20,80,0)');
+            context.fillStyle = gradient;
+            context.fill();
+            context.lineWidth = 1.5;
+            context.strokeStyle = 'rgba(255,255,255,0.75)';
+            context.stroke();
+            context.restore();
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        function getShapeColors() {
+            const cols = new Float32Array(PARTICLE_COUNT * 3);
+            
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                let brightness = (0.2 + Math.random() * 0.8) * 1.3;  // +30% brightness
+                cols[i * 3] = brightness;
+                cols[i * 3 + 1] = brightness;
+                cols[i * 3 + 2] = brightness;
+            }
+            return cols;
+        }
+
+        function getShapePositions() {
+            const pos = new Float32Array(PARTICLE_COUNT * 3);
+
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const r = 10 + Math.random() * 2;
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                const x = r * Math.sin(phi) * Math.cos(theta);
+                const y = r * Math.sin(phi) * Math.sin(theta);
+                const z = r * Math.cos(phi);
+                if (i < PARTICLE_COUNT * 0.2) {
+                    // 内层球体 - 完全不变
+                    pos[i * 3] = x * 0.3;
+                    pos[i * 3 + 1] = y * 0.3;
+                    pos[i * 3 + 2] = z * 0.3;
+                    continue;
+                }
+
+                // 外层爱心形状：2D心形曲线绕Y轴旋转生成3D心形外壳
+                const sc = 1.08;         // 90% of previous 1.20 (user: shrink to 90%)
+                const maxHx = 16 * sc;
+
+                let t, hx, hy;
+                // 拒绝采样：凹口/尖部(hx≈0)按比例稀释，使密度与边缘一致
+                do {
+                    t = Math.random() * Math.PI * 2;
+                    hx = 16 * Math.pow(Math.sin(t), 3) * sc;
+                    hy = (13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t)) * sc;
+                    // normalizedHx: 0(轴心) ~ 1(最宽处)
+                    // 阈值0.38：hx < 38%最大值时线性稀释，消除凹口和尖部堆积
+                    const normalizedHx = Math.abs(hx) / maxHx;
+                    const keepProb = Math.min(1.0, normalizedHx / 0.38);
+                    if (Math.random() <= keepProb) break;
+                } while (true);
+
+                const spinPhi = Math.random() * Math.PI * 2;
+
+                // 绕Y轴旋转，Z方向压扁(侧视图呈椭圆)
+                const depthFactor = 0.52;
+                const px = hx * Math.cos(spinPhi);
+                const py = hy;
+                const pz = hx * Math.sin(spinPhi) * depthFactor;
+
+                // 边缘扩散效果（与原球体边缘散射相同量级）
+                const dist = Math.sqrt(px*px + py*py + pz*pz) + 0.001;
+                const scatter = Math.random() * 3.6;  // scale with heart size (×0.9)
+                pos[i * 3]     = px + (px / dist) * scatter;
+                pos[i * 3 + 1] = py + (py / dist) * scatter;
+                pos[i * 3 + 2] = pz + (pz / dist) * scatter;
+            }
+            return pos;
+        }
+
+        // ── 3D Photo Particles: wind-blown photos floating between inner/outer layers ──
+        async function buildPhotoParticles() {
+            // Dispose previous group
+            if (photoParticleGroup) {
+                scene.remove(photoParticleGroup);
+                photoParticleGroup.traverse(obj => {
+                    if (obj.isMesh) { obj.geometry.dispose(); obj.material.dispose(); }
+                });
+                photoParticleGroup = null;
+            }
+            // Always build photo planes — use uploaded photos or a default card placeholder
+            const photos = uploadedPhotos.length > 0 ? uploadedPhotos : [{ dataUrl: null, isLandscape: false }];
+            const TOTAL    = 900;
+            const perPhoto = Math.max(1, Math.floor(TOTAL / photos.length));
+
+            // Build a bordered photo canvas → texture
+            const makeTexture = (dataUrl) => new Promise(resolve => {
+                if (!dataUrl) {
+                    // Default placeholder: card-back pattern (no photo yet)
+                    const cv = document.createElement('canvas');
+                    cv.width = 200; cv.height = 300;
+                    const cx = cv.getContext('2d');
+                    cx.fillStyle = '#bec8d0';
+                    cx.fillRect(0, 0, 200, 300);
+                    cx.fillStyle = '#cdd6dd';
+                    cx.fillRect(12, 12, 176, 276);
+                    const tex = new THREE.CanvasTexture(cv);
+                    tex.needsUpdate = true;
+                    resolve(tex);
+                    return;
+                }
+                const img = new Image();
+                img.onload = () => {
+                    const pad = Math.round(Math.min(img.width, img.height) * 0.06);
+                    const cv = document.createElement('canvas');
+                    cv.width  = img.width  + pad * 2;
+                    cv.height = img.height + pad * 2;
+                    const cx = cv.getContext('2d');
+                    cx.fillStyle = '#bec8d0';
+                    cx.fillRect(0, 0, cv.width, cv.height);
+                    cx.drawImage(img, pad, pad, img.width, img.height);
+                    const tex = new THREE.CanvasTexture(cv);
+                    tex.needsUpdate = true;
+                    resolve(tex);
+                };
+                img.src = dataUrl;
+            });
+
+            // Shared wind-blown PlaneGeometry with subtle curl
+            const makeGeo = (w, h) => {
+                const geo = new THREE.PlaneGeometry(w, h, 6, 6);
+                const pos = geo.attributes.position;
+                for (let k = 0; k < pos.count; k++) {
+                    const lx = pos.getX(k) / (w * 0.5);   // −1..1
+                    const ly = pos.getY(k) / (h * 0.5);
+                    // Gentle page-curl: edges lift slightly, center stays flat
+                    pos.setZ(k, (lx * lx * 0.06 + ly * ly * 0.04));
+                }
+                pos.needsUpdate = true;
+                geo.computeVertexNormals();
+                return geo;
+            };
+
+            photoParticleGroup = new THREE.Group();
+
+            const textures = await Promise.all(photos.map(p => makeTexture(p.dataUrl)));
+            const dummy    = new THREE.Object3D();
+
+            photos.forEach((photo, pi) => {
+                const aspect = photo.isLandscape ? 1.5 : (2 / 3);
+                const W = PARTICLE_SIZE, H = W / aspect;
+                const geo = makeGeo(W, H);
+                const mat = new THREE.MeshBasicMaterial({
+                    map:         textures[pi],
+                    color:       new THREE.Color(1.08, 1.08, 1.08),  // 1.2 * 0.9 = -10%
+                    side:        THREE.DoubleSide,
+                    transparent: false,   // opacity 100%
+                    depthWrite:  false,
+                    blending:    THREE.NormalBlending,
+                });
+
+                const mesh = new THREE.InstancedMesh(geo, mat, perPhoto);
+                mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+
+                for (let j = 0; j < perPhoto; j++) {
+                    // Inner sphere zone, range +20% (0–4.2), density decreasing outward
+                    // pow(u,1.8): biases toward small r → dense near center, sparse at edge
+                    const r = 5.46 * Math.pow(Math.random(), 1.8);  // 4.2 × 1.3 = 5.46
+                    const theta = Math.random() * Math.PI * 2;
+                    const phi   = Math.acos(2 * Math.random() - 1);
+                    dummy.position.set(
+                        r * Math.sin(phi) * Math.cos(theta),
+                        r * Math.sin(phi) * Math.sin(theta),
+                        r * Math.cos(phi)
+                    );
+                    // Wind-blown: strongly random rotation on all axes
+                    dummy.rotation.set(
+                        (Math.random() - 0.5) * Math.PI * 2,
+                        (Math.random() - 0.5) * Math.PI * 2,
+                        (Math.random() - 0.5) * Math.PI * 2
+                    );
+                    const s = 0.7 + Math.random() * 0.6;   // slight size variation
+                    dummy.scale.set(s, s, s);
+                    dummy.updateMatrix();
+                    mesh.setMatrixAt(j, dummy.matrix);
+                }
+                mesh.instanceMatrix.needsUpdate = true;
+                photoParticleGroup.add(mesh);
+            });
+
+            scene.add(photoParticleGroup);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            const time = clock.getElapsedTime();
+            
+            const positions = particles.geometry.attributes.position.array;
+            const colors = particles.geometry.attributes.color.array;
+            
+            let targetScaleBase = 1.0;
+            let targetParticleSize = PARTICLE_SIZE; 
+            let turbulence = 0.05;
+
+            // 【模式应用】
+            if (isHandDetected) {
+                targetScaleBase = 0.2 + (handInfluence * 2.3);
+                turbulence = 0.02 + (handInfluence * 0.3);
+                targetParticleSize = PARTICLE_SIZE * (0.8 + handInfluence * 2.5);
+            } else {
+                targetScaleBase = 1.0 + Math.sin(time * 1.5) * 0.05;
+                targetParticleSize = PARTICLE_SIZE * (1.0 + Math.sin(time * 1.5) * 0.15);
+            }
+
+            if (particles && particles.material) {
+                particles.material.size = THREE.MathUtils.lerp(particles.material.size, targetParticleSize, 0.1);
+                
+                const camRight = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion).normalize();
+                const camUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
+                const camForward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
+
+                particles.rotateOnWorldAxis(camUp, rotationVelocity.y);
+                particles.rotateOnWorldAxis(camRight, rotationVelocity.x);
+                particles.rotateOnWorldAxis(camForward, rotationVelocity.z);
+                
+                const MAX_SPEED = 0.06;
+                const MAX_ROLL_SPEED = 0.035;
+
+                rotationVelocity.x = THREE.MathUtils.clamp(rotationVelocity.x, -MAX_SPEED, MAX_SPEED);
+                rotationVelocity.y = THREE.MathUtils.clamp(rotationVelocity.y, -MAX_SPEED, MAX_SPEED);
+                rotationVelocity.z = THREE.MathUtils.clamp(rotationVelocity.z, -MAX_ROLL_SPEED, MAX_ROLL_SPEED);
+
+                rotationVelocity.x *= 0.92; 
+                rotationVelocity.y *= 0.92;
+                rotationVelocity.z *= 0.96; 
+            }
+
+            const lerpSpeed = 0.06;
+            const colorLerpSpeed = 0.03; 
+
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const idx = i * 3;
+                
+                let tx = targetPositions[idx];
+                let ty = targetPositions[idx+1];
+                let tz = targetPositions[idx+2];
+
+                const dist = Math.sqrt(tx * tx + ty * ty + tz * tz);
+                const normalizedDist = Math.min(dist / 20.0, 1.0);
+                
+                let distanceExpansionBoost = 1.0;
+                if (isHandDetected) {
+                    distanceExpansionBoost = 1.0 + (handInfluence * Math.pow(normalizedDist, 1.5) * 2.0);
+                }
+                
+                const finalScale = targetScaleBase * distanceExpansionBoost;
+                tx *= finalScale; ty *= finalScale; tz *= finalScale;
+
+                tx += Math.sin(time * 2 + i) * turbulence;
+                ty += Math.cos(time * 3 + i) * turbulence;
+                tz += Math.sin(time * 4 + i) * turbulence;
+
+                positions[idx] += (tx - positions[idx]) * lerpSpeed;
+                positions[idx+1] += (ty - positions[idx+1]) * lerpSpeed;
+                positions[idx+2] += (tz - positions[idx+2]) * lerpSpeed;
+                
+                if (targetColors.length > 0) {
+                    colors[idx] += (targetColors[idx] - colors[idx]) * colorLerpSpeed;
+                    colors[idx+1] += (targetColors[idx+1] - colors[idx+1]) * colorLerpSpeed;
+                    colors[idx+2] += (targetColors[idx+2] - colors[idx+2]) * colorLerpSpeed;
+                }
+
+                if (Math.random() > 0.9995) {
+                    colors[idx] = 2.0; colors[idx+1] = 2.0; colors[idx+2] = 2.0; 
+                }
+                if (colors[idx] > 1.5) {
+                    colors[idx] *= 0.9; colors[idx+1] *= 0.9; colors[idx+2] *= 0.9;
+                }
+            }
+
+            particles.geometry.attributes.position.needsUpdate = true;
+            particles.geometry.attributes.color.needsUpdate = true;
+
+            // Keep photo particles co-rotating + ambient drift + co-scaling
+            if (photoParticleGroup) {
+                _photoDriftAngle += 0.0008;  // slow ambient tumble
+                _photoDriftQ.setFromAxisAngle(_photoDriftAxis, _photoDriftAngle);
+                // Compose: particles base rotation × drift
+                photoParticleGroup.quaternion.multiplyQuaternions(particles.quaternion, _photoDriftQ);
+                // Smoothly track particle system scale
+                const ps = photoParticleGroup.scale.x;
+                photoParticleGroup.scale.setScalar(THREE.MathUtils.lerp(ps, targetScaleBase, 0.06));
+
+                // Hide ALL inner sphere particles (replaced by 3D photo planes)
+                const innerEnd = Math.floor(PARTICLE_COUNT * 0.2);  // = 9000
+                for (let ri = 0; ri < innerEnd; ri++) {
+                    positions[ri*3] = 0; positions[ri*3+1] = 0; positions[ri*3+2] = 0;
+                }
+            }
+
+            if (!isHandDetected) {
+                controls.autoRotate = true;
+                controls.autoRotateSpeed = 1.0;
+            } else {
+                controls.autoRotate = false;
+            }
+
+            // Card strip — inertia carousel
+            // Freeze strip when a card is grabbed
+            if (cardsVisible && !cardGrabbed) {
+                cardVelocity *= 0.92;   // 惯性衰减，← 在这里改（越大滑行越远）
+                if (Math.abs(cardVelocity) > 0.05) {
+                    cardOffset += cardVelocity;
+                    updateCardStrip();
+                }
+            }
+
+            controls.update();
+            composer.render();
+        }
+
+        async function setupMediaPipe() {
+            const videoElement = document.getElementById('video-element');
+            const statusDot = document.getElementById('status-dot');
+            const statusText = document.getElementById('status-text');
+            const modeScaleText = document.getElementById('mode-scale');
+            const modeRotateText = document.getElementById('mode-rotate');
+            const modeRollText = document.getElementById('mode-roll'); 
+
+            const hands = new Hands({locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }});
+
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+
+            hands.onResults((results) => {
+                const now = Date.now();
+
+                // 【信号防抖核心逻辑】
+                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                    // --- 检测到手 ---
+                    isHandDetected = true;
+                    lastTimeHandDetected = now; 
+                    
+                    statusDot.className = "w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_15px_cyan]";
+                    statusText.innerText = "LINK ESTABLISHED";
+                    statusText.className = "text-[10px] text-cyan-300 font-mono uppercase tracking-wider font-bold";
+                    
+                    const landmarks = results.multiHandLandmarks[0];
+                    
+                    // ... [手势识别逻辑] ...
+                    const getDist = (i, j) => {
+                        return Math.sqrt(Math.pow(landmarks[i].x - landmarks[j].x, 2) + Math.pow(landmarks[i].y - landmarks[j].y, 2));
+                    };
+
+                    // 【核心优化：手势判定宽松化】
+                    // 只要指尖离手腕足够远，就认为是伸直的。
+                    // 系数 1.1 比较宽松，确保稍微弯一点也算伸直
+                    const isIndexOpen = getDist(8, 0) > getDist(6, 0) * 1.1;
+                    const isMiddleOpen = getDist(12, 0) > getDist(10, 0) * 1.1;
+                    
+                    // 无名指和小指：用于判定是否为 Scale 模式
+                    // 只要它们有一个是明显伸直的，就认为不是双指模式
+                    const isRingOpen = getDist(16, 0) > getDist(14, 0) * 1.1;
+                    const isPinkyOpen = getDist(20, 0) > getDist(18, 0) * 1.1;
+
+                    let detectedMode = 'scale';
+
+                    // 【优先级逻辑优化】
+                    // 1. 如果无名指或小指是伸直的 -> Scale (最优先，防止五指张开时误判)
+                    // 2. 如果只有食指和中指伸直 -> Roll (双指画圈)
+                    // 3. 如果只有食指伸直 -> Rotate (单指旋转)
+                    // 4. 其他情况 (握拳等) -> Scale
+                    
+                    if (isRingOpen || isPinkyOpen) {
+                        detectedMode = 'scale'; 
+                    } else if (isIndexOpen && isMiddleOpen) {
+                        detectedMode = 'roll'; 
+                    } else if (isIndexOpen && !isMiddleOpen) {
+                        detectedMode = 'rotate'; 
+                    } else {
+                        detectedMode = 'scale'; // 握拳也是 Scale (收缩)
+                    }
+
+                    // ── 小卡抓取优先：被选中时锁定 roll 模式，检测三指分开放回 ──
+                    if (cardGrabbed && cardsVisible) {
+                        const RELEASE_THRESH = 0.13;
+                        const rd48  = getDist(4, 8);
+                        const rd812 = getDist(8, 12);
+                        const rd412 = getDist(4, 12);
+                        if (Math.max(rd48, rd812, rd412) > RELEASE_THRESH) {
+                            releaseCardGrab();
+                        }
+                        detectedMode = 'roll';   // 被抓住时禁止模式切换
+                    }
+
+                    if (detectedMode === currentStableMode) {
+                        modeFrameCounter = 0;
+                    } else {
+                        modeFrameCounter++;
+                        // 减少切换阈值，让反应更快 (4帧约 60ms)
+                        let switchThreshold = 4;
+
+                        if (modeFrameCounter > switchThreshold) {
+                            if (currentStableMode === 'roll') hideCardShowcase();
+                            currentStableMode = detectedMode;
+                            modeFrameCounter = 0;
+                            isTrackingRotation = false;
+                            isTrackingRoll = false;
+                            previousFingerPos = { x: 0, y: 0 };
+                            prevMidX = null;
+                        }
+                    }
+
+                    modeScaleText.classList.remove('active');
+                    modeRotateText.classList.remove('active');
+                    modeRollText.classList.remove('active');
+                    if (currentStableMode === 'roll') modeRollText.classList.add('active');
+                    else if (currentStableMode === 'rotate') modeRotateText.classList.add('active');
+                    else modeScaleText.classList.add('active');
+
+                    if (currentStableMode === 'roll') {
+                        // 【双指手势：展示小卡 + 横向平移轮播】
+                        showCardShowcase();
+
+                        const midX = (landmarks[8].x + landmarks[12].x) / 2;
+
+                        if (cardGrabbed) {
+                            cardVelocity = 0;
+                            accelFrames  = 0;
+                            prevZone     = 'safe';
+                        } else {
+                            // ── 安全区：中间 20% (0.4~0.6)；左侧/右侧各 40% ──
+                            const AUTO_BASE  = 5;    // ← 起始速度 (px/frame)，在这里改
+                            const AUTO_MAX   = 80;   // ← 最大速度 (px/frame)，在这里改
+                            const ACCEL_RATE = 0.45; // ← 每帧加速量，越大加速越猛，在这里改
+
+                            let zone;
+                            if      (midX < 0.4) zone = 'left';
+                            else if (midX > 0.6) zone = 'right';
+                            else                 zone = 'safe';
+
+                            // 切换区域时重置加速帧数
+                            if (zone !== prevZone) { accelFrames = 0; prevZone = zone; }
+
+                            if (zone === 'safe') {
+                                cardVelocity *= 0.85;   // 安全区：缓慢减速到 0
+                                accelFrames = 0;
+                            } else {
+                                accelFrames++;
+                                const speed = Math.min(AUTO_BASE + ACCEL_RATE * accelFrames, AUTO_MAX);
+                                cardVelocity = (zone === 'left') ? -speed : speed;
+                            }
+                        }
+                        prevMidX = midX;
+
+                        // ── 抓取手势优先：三指聚拢即触发，不受速度限制 ──
+                        if (!cardGrabbed) {
+                            const GRAB_THRESH = 0.07;
+                            const gd48  = getDist(4, 8);
+                            const gd812 = getDist(8, 12);
+                            const gd412 = getDist(4, 12);
+                            if (Math.max(gd48, gd812, gd412) < GRAB_THRESH) {
+                                applyCardGrab();  // applyCardGrab() 内已清零 cardVelocity
+                            }
+                        }
+
+                        isTrackingRoll = true;
+                        isTrackingRotation = false;
+
+                    } else if (currentStableMode === 'rotate') {
+                        const rawFingerX = landmarks[8].x;
+                        const rawFingerY = landmarks[8].y;
+
+                        if (!isTrackingRotation) {
+                            smoothedFingerPos = { x: rawFingerX, y: rawFingerY };
+                            previousFingerPos = { x: rawFingerX, y: rawFingerY };
+                            isTrackingRotation = true;
+                        }
+
+                        const smoothingFactor = 0.2; 
+                        smoothedFingerPos.x = THREE.MathUtils.lerp(smoothedFingerPos.x, rawFingerX, smoothingFactor);
+                        smoothedFingerPos.y = THREE.MathUtils.lerp(smoothedFingerPos.y, rawFingerY, smoothingFactor);
+
+                        const deltaX = smoothedFingerPos.x - previousFingerPos.x;
+                        const deltaY = smoothedFingerPos.y - previousFingerPos.y;
+                        
+                        const MOVE_THRESHOLD = 0.005; 
+
+                        if (Math.abs(deltaX) > MOVE_THRESHOLD || Math.abs(deltaY) > MOVE_THRESHOLD) {
+                            const sensitivity = 3.5; 
+                            if (Math.abs(deltaX) > Math.abs(deltaY)) {
+                                const effectiveX = deltaX > 0 ? deltaX - MOVE_THRESHOLD : deltaX + MOVE_THRESHOLD;
+                                rotationVelocity.y -= effectiveX * sensitivity; 
+                            } else {
+                                const effectiveY = deltaY > 0 ? deltaY - MOVE_THRESHOLD : deltaY + MOVE_THRESHOLD;
+                                rotationVelocity.x += effectiveY * sensitivity;
+                            }
+                        }
+                        previousFingerPos = { x: smoothedFingerPos.x, y: smoothedFingerPos.y };
+                        isTrackingRoll = false;
+                        
+                    } else {
+                        // 【缩放模式】
+                        if (isTrackingRoll) { isTrackingRoll = false; }
+                        isTrackingRotation = false;
+
+                        const tips = [4, 8, 12, 16, 20];
+                        let totalDist = 0;
+                        tips.forEach(idx => {
+                            totalDist += getDist(idx, 0); 
+                        });
+                        
+                        const avgDist = totalDist / 5;
+                        let rawOpenness = (avgDist - 0.08) / (0.4 - 0.08);
+                        rawOpenness = Math.max(0, Math.min(1, rawOpenness));
+
+                        handInfluence = THREE.MathUtils.lerp(handInfluence, rawOpenness, 0.2);
+                    }
+
+                } else {
+                    // --- 未检测到手 ---
+                    if (now - lastTimeHandDetected < 800) {
+                        return; 
+                    }
+
+                    isHandDetected = false;
+                    isTrackingRotation = false;
+                    isTrackingRoll = false;
+                    modeFrameCounter = 0;
+                    currentStableMode = 'scale';
+                    hideCardShowcase();
+                    prevMidX = null;
+
+                    statusDot.className = "w-2 h-2 rounded-full bg-red-500 shadow-[0_0_10px_red]";
+                    statusText.innerText = "SEARCHING SIGNAL...";
+                    statusText.className = "text-[10px] text-red-400 font-mono uppercase tracking-wider animate-pulse";
+                    
+                    handInfluence = THREE.MathUtils.lerp(handInfluence, 0.5, 0.02); 
+                    
+                    modeScaleText.classList.remove('active');
+                    modeRotateText.classList.remove('active');
+                    modeRollText.classList.remove('active');
+                }
+            });
+
+            const cameraUtils = new Camera(videoElement, {
+                onFrame: async () => { await hands.send({image: videoElement}); },
+                width: 640, height: 480
+            });
+
+            try {
+                await cameraUtils.start();
+                const loader = document.getElementById('loader-overlay');
+                loader.style.opacity = '0';
+                setTimeout(() => loader.remove(), 800);
+            } catch (err) {
+                console.error(err);
+                statusText.innerText = "CAMERA ERROR";
+            }
+        }
+
+        window.onWindowResize = () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        };
+
+        window.updateColor = (hex) => {
+            const c = new THREE.Color(hex);
+            userBaseColor = c; 
+
+            if(particles) {
+                const initial = particles.material.color.clone();
+                let alpha = 0;
+                const anim = () => {
+                    alpha += 0.05;
+                    particles.material.color.lerpColors(initial, c, alpha);
+                    if (alpha < 1) requestAnimationFrame(anim);
+                };
+                anim();
+            }
+        };
+
+        window.toggleFullScreen = () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen();
+            } else {
+                if (document.exitFullscreen) document.exitFullscreen();
+            }
+        };
+        document.addEventListener('fullscreenchange', () => {
+            document.getElementById('ui-overlay').style.display =
+                document.fullscreenElement ? 'none' : '';
+        });
+
+        const TWEEN = {
+            Tween: function(obj) {
+                this.obj = obj;
+                this.target = {};
+                this.duration = 1000;
+                this.startTime = 0;
+                this.to = function(target, duration) { this.target = target; this.duration = duration; return this; };
+                this.start = function() { this.startTime = performance.now(); this.initial = { r: this.obj.r, g: this.obj.g, b: this.obj.b }; requestAnimationFrame(this.update.bind(this)); return this; };
+                this.update = function(time) {
+                    const elapsed = time - this.startTime;
+                    const progress = Math.min(elapsed / this.duration, 1);
+                    const ease = 1 - Math.pow(1 - progress, 3);
+                    this.obj.r = this.initial.r + (this.target.r - this.initial.r) * ease;
+                    this.obj.g = this.initial.g + (this.target.g - this.initial.g) * ease;
+                    this.obj.b = this.initial.b + (this.target.b - this.initial.b) * ease;
+                    if (progress < 1) { requestAnimationFrame(this.update.bind(this)); }
+                };
+            }
+        };
+
+        // ── Card Showcase System ──
+        let uploadedPhotos = [];      // [{dataUrl, isLandscape}, ...]
+        let backImagePortrait = null;
+        let backImageLandscape = null;
+        let cardsVisible = false;
+
+        // ── Auto-load from local server folders ──
+        async function loadLocalAssets() {
+            if (location.protocol === 'file:') return; // must be served via server
+
+            async function listDir(dir) {
+                try {
+                    const r = await fetch(`/api/list?dir=${dir}`);
+                    if (!r.ok) return [];
+                    return await r.json();
+                } catch { return []; }
+            }
+
+            // photos/
+            const photoFiles = await listDir('photos');
+            await Promise.all(photoFiles.map(name => new Promise(resolve => {
+                const dataUrl_path = `/photos/${encodeURIComponent(name)}`;
+                fetch(dataUrl_path).then(r => r.blob()).then(blob => {
+                    const reader = new FileReader();
+                    reader.onload = e => {
+                        const img = new Image();
+                        img.onload = () => { uploadedPhotos.push({ dataUrl: e.target.result, isLandscape: img.width > img.height }); resolve(); };
+                        img.onerror = resolve;
+                        img.src = e.target.result;
+                    };
+                    reader.readAsDataURL(blob);
+                }).catch(resolve);
+            })));
+
+            // backgraph/
+            const bgFiles = await listDir('backgraph');
+            await Promise.all(bgFiles.map(name => new Promise(resolve => {
+                fetch(`/backgraph/${encodeURIComponent(name)}`).then(r => r.blob()).then(blob => {
+                    const reader = new FileReader();
+                    reader.onload = e => {
+                        const img = new Image();
+                        img.onload = () => {
+                            if (img.width > img.height) { if (!backImageLandscape) backImageLandscape = e.target.result; }
+                            else                        { if (!backImagePortrait)  backImagePortrait  = e.target.result; }
+                            resolve();
+                        };
+                        img.onerror = resolve;
+                        img.src = e.target.result;
+                    };
+                    reader.readAsDataURL(blob);
+                }).catch(resolve);
+            })));
+
+            // music/
+            const musicFiles = await listDir('music');
+            musicFiles.forEach(name => {
+                musicTracks.push({ name: name.replace(/\.[^.]+$/, ''), url: `/music/${encodeURIComponent(name)}` });
+            });
+            if (musicTracks.length > 0) { renderMusicList(); musicPlay(0); }
+        }
+
+        window.toggleBackMenu = () => {
+            document.getElementById('back-submenu').classList.toggle('open');
+        };
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('#back-submenu') && !e.target.closest('#back-graph-btn')) {
+                document.getElementById('back-submenu').classList.remove('open');
+            }
+            if (!e.target.closest('#music-panel') && !e.target.closest('#music-btn')) {
+                document.getElementById('music-panel').classList.remove('open');
+            }
+        });
+
+        // ── Music player ──
+        const musicAudio = new Audio();
+        let musicTracks = [];   // [{name, url}, ...]
+        let musicIndex  = -1;
+
+        window.toggleMusicPanel = () => {
+            const panel = document.getElementById('music-panel');
+            if (!panel.classList.contains('open')) {
+                // open → prompt upload if empty
+                panel.classList.add('open');
+                if (musicTracks.length === 0) {
+                    document.getElementById('music-input').click();
+                }
+            } else {
+                panel.classList.remove('open');
+            }
+        };
+
+        document.getElementById('music-input').addEventListener('change', function(e) {
+            const files = Array.from(e.target.files);
+            files.forEach(file => {
+                const url  = URL.createObjectURL(file);
+                const name = file.name.replace(/\.[^.]+$/, ''); // strip extension
+                musicTracks.push({ name, url });
+            });
+            renderMusicList();
+            if (musicIndex === -1 && musicTracks.length > 0) musicPlay(0);
+            this.value = '';
+        });
+
+        function renderMusicList() {
+            const list = document.getElementById('music-list');
+            list.innerHTML = '';
+            musicTracks.forEach((t, i) => {
+                const row = document.createElement('div');
+                row.className = 'music-item' + (i === musicIndex ? ' playing' : '');
+                row.innerHTML = `<span style="font-size:9px;color:${i===musicIndex?'#4de8ff':'rgba(255,255,255,0.3)'}">` +
+                    (i === musicIndex ? '▶' : '·') + `</span><span class="music-item-name">${t.name}</span>`;
+                row.onclick = () => musicPlay(i);
+                list.appendChild(row);
+            });
+        }
+
+        function musicPlay(idx) {
+            if (idx < 0 || idx >= musicTracks.length) return;
+            musicIndex = idx;
+            musicAudio.src = musicTracks[idx].url;
+            musicAudio.play();
+            document.getElementById('music-play-btn').textContent = '⏸';
+            document.getElementById('music-now-playing').textContent = musicTracks[idx].name;
+            renderMusicList();
+        }
+
+        window.musicToggle = () => {
+            if (musicAudio.paused) { musicAudio.play(); document.getElementById('music-play-btn').textContent = '⏸'; }
+            else { musicAudio.pause(); document.getElementById('music-play-btn').textContent = '▶'; }
+        };
+        window.musicPrev = () => musicPlay((musicIndex - 1 + musicTracks.length) % musicTracks.length);
+        window.musicNext = () => musicPlay((musicIndex + 1) % musicTracks.length);
+
+        window.musicSeek = (e) => {
+            const rect = document.getElementById('music-progress-wrap').getBoundingClientRect();
+            const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+            if (musicAudio.duration) musicAudio.currentTime = ratio * musicAudio.duration;
+        };
+
+        musicAudio.addEventListener('timeupdate', () => {
+            if (!musicAudio.duration) return;
+            document.getElementById('music-progress-bar').style.width =
+                (musicAudio.currentTime / musicAudio.duration * 100) + '%';
+        });
+        musicAudio.addEventListener('ended', () => {
+            musicPlay((musicIndex + 1) % musicTracks.length);
+        });
+
+        // ── Carousel state ──
+        const CARD_GAP     = 38;    // fixed edge-to-edge gap between cards (px)
+        const MAX_ROT_Y    = 45;    // screen-edge card rotation (deg)
+        const ARC_DROP     = 28;    // screen-edge card drop (px)
+        let   totalCardW   = 0;     // full strip width incl. trailing gap (for infinite wrap)
+        let   cardOffset   = 0;     // current pan position (px)
+        let   cardVelocity = 0;     // scroll velocity (px/frame, no decay = infinite)
+        let   prevMidX     = null;  // two-finger midpoint X (prev frame)
+        let   stillFrames  = 0;    // consecutive frames fingers haven't moved (for acceleration)
+        let   accelFrames  = 0;    // frames spent in left/right acceleration zone
+        let   prevZone     = 'safe'; // 'left' | 'safe' | 'right'
+        let   cardElements = [];    // cached [{card, flipper, trail, xBase, onScreen, w, _grabbed}]
+        let   cardGrabbed    = false;
+        let   grabbedCardIdx = -1;
+
+        function findCenterCardIdx() {
+            let minAbs = Infinity, idx = 0;
+            for (let i = 0; i < cardElements.length; i++) {
+                let vx = cardElements[i].xBase + cardOffset;
+                vx = ((vx % totalCardW) + totalCardW) % totalCardW;
+                if (vx > totalCardW / 2) vx -= totalCardW;
+                if (Math.abs(vx) < minAbs) { minAbs = Math.abs(vx); idx = i; }
+            }
+            return idx;
+        }
+
+        function applyCardGrab() {
+            if (cardElements.length === 0) return;
+            cardGrabbed    = true;
+            cardVelocity   = 0;
+            grabbedCardIdx = findCenterCardIdx();
+            for (let i = 0; i < cardElements.length; i++) {
+                const el = cardElements[i];
+                if (i === grabbedCardIdx) {
+                    el._grabbed = true;
+                    el.card.style.scale   = '1.95';
+                    el.card.style.opacity = '1';
+                    // 青色发光加在 inner（不破坏 flipper 的 preserve-3d 上下文）
+                    el.inner.style.boxShadow = '0 0 18px 4px rgba(80,220,255,0.65)';
+                } else {
+                    el._grabbed = false;
+                    el.card.style.scale   = '1';
+                    el.card.style.opacity = '0.5';
+                    el.inner.style.boxShadow = '';
+                }
+            }
+        }
+
+        function releaseCardGrab() {
+            for (let i = 0; i < cardElements.length; i++) {
+                const el = cardElements[i];
+                el._grabbed = false;
+                el.card.style.scale   = '1';
+                el.card.style.opacity = '1';
+                el.inner.style.boxShadow = '';
+            }
+            cardGrabbed    = false;
+            grabbedCardIdx = -1;
+        }
+
+        function buildCardSpread() {
+            const spread = document.getElementById('card-spread');
+            spread.innerHTML = '';
+            cardOffset   = 0;
+            cardVelocity = 0;
+            cardElements = [];
+
+            const n = uploadedPhotos.length;
+            if (n === 0) return;
+
+            const PW = 182, PH = 273, LW = 273, LH = 182;
+
+            // One scrollable track inside the perspective container
+            const track = document.createElement('div');
+            track.id = 'card-track';
+            track.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;transform-style:preserve-3d;';
+            spread.appendChild(track);
+
+            // Cumulative x centers: gap between card EDGES = CARD_GAP
+            // Use n gaps (incl. trailing) so the strip tiles seamlessly for infinite loop
+            const widths = uploadedPhotos.map(p => p.isLandscape ? LW : PW);
+            totalCardW = widths.reduce((s, w) => s + w, 0) + n * CARD_GAP;
+            const xCenters = [];
+            let cursor = -totalCardW / 2;
+            widths.forEach(w => { xCenters.push(cursor + w / 2); cursor += w + CARD_GAP; });
+
+            uploadedPhotos.forEach((photo, i) => {
+                const w = photo.isLandscape ? LW : PW;
+                const h = photo.isLandscape ? LH : PH;
+
+                const card = document.createElement('div');
+                card.className        = 'photo-card';
+                card.dataset.xBase    = xCenters[i];
+                card.dataset.onScreen = 'false';   // flip state tracking
+                card.style.position   = 'absolute';
+                card.style.width      = w + 'px';
+                card.style.height     = h + 'px';
+                card.style.left       = '50%';
+                card.style.top        = '50%';
+                card.style.marginLeft = (-w / 2) + 'px';
+                card.style.marginTop  = (-h / 2) + 'px';
+                card.style.transform  = 'translateX(0px)';
+
+                // Flip wrapper (back + front)
+                const flipper = document.createElement('div');
+                flipper.className = 'photo-card-flipper';
+                flipper.style.cssText = `width:${w}px;height:${h}px`;
+
+                const back = document.createElement('div');
+                back.className = 'photo-card-back';
+                const backSrc = photo.isLandscape ? backImageLandscape : backImagePortrait;
+                if (backSrc) {
+                    back.style.backgroundImage = `url(${backSrc})`;
+                    back.style.backgroundSize = 'cover';
+                    back.style.backgroundPosition = 'center';
+                }
+
+                const inner = document.createElement('div');
+                inner.className = 'photo-card-inner';
+                inner.style.cssText = `width:${w}px;height:${h}px`;
+
+                const img = document.createElement('img');
+                img.src = photo.dataUrl;
+                inner.appendChild(img);
+
+                const trail = document.createElement('div');
+                trail.className = 'card-trail';
+                trail.style.width = '0px';
+
+                flipper.appendChild(back);
+                flipper.appendChild(inner);
+                flipper.appendChild(trail);
+                card.appendChild(flipper);
+                track.appendChild(card);
+
+                cardElements.push({ card, flipper, inner, trail, xBase: xCenters[i], onScreen: false, w, _trailRight: null, _grabbed: false });
+            });
+
+            updateCardStrip();  // apply initial screen-space arc & rotation
+        }
+
+        function updateCardStrip() {
+            if (totalCardW === 0) return;
+            const halfScreen = window.innerWidth / 2;
+            const ENTER_ZONE = halfScreen * 1.15;
+
+            // Trail: width scales with speed, direction opposite to motion
+            const absV = Math.abs(cardVelocity);
+            const trailW = Math.min(absV * 2.2, 60);   // max 60px trail
+            const movingRight = cardVelocity > 0;       // cards move right → trail on left side
+
+            for (let i = 0; i < cardElements.length; i++) {
+                const el = cardElements[i];
+
+                // ── Infinite wrap: map each card to its nearest-to-center copy ──
+                let vx = el.xBase + cardOffset;
+                vx = ((vx % totalCardW) + totalCardW) % totalCardW;   // always positive
+                if (vx > totalCardW / 2) vx -= totalCardW;            // bring to [-T/2, T/2)
+
+                // ── Screen-space arc & rotation (keyed to vx, NOT array index) ──
+                const st    = vx / halfScreen;
+                const yDrop = st * st * ARC_DROP;
+                const rotY  = -st * MAX_ROT_Y;
+                const zIdx  = Math.max(1, Math.round(1000 - Math.abs(st) * 500));
+
+                el.card.style.zIndex    = el._grabbed ? 2000 : zIdx;
+                el.card.style.transform = `translateX(${vx}px) translateY(${yDrop}px) rotateY(${rotY}deg)`;
+                // scale is handled via CSS `scale` property (animated separately from transform)
+
+                // ── Motion trail (transform only — no left/right to avoid layout thrash) ──
+                if (trailW > 1) {
+                    el.trail.style.width = trailW + 'px';
+                    if (movingRight) {
+                        // Trail on left side: slide left
+                        el.trail.style.transform = `translateX(${-trailW - 2}px)`;
+                        if (el._trailRight !== false) {
+                            el.trail.style.background = 'linear-gradient(to left, transparent, rgba(255,255,255,0.18))';
+                            el._trailRight = false;
+                        }
+                    } else {
+                        // Trail on right side: slide past card right edge
+                        el.trail.style.transform = `translateX(${el.w + 2}px)`;
+                        if (el._trailRight !== true) {
+                            el.trail.style.background = 'linear-gradient(to right, transparent, rgba(255,255,255,0.18))';
+                            el._trailRight = true;
+                        }
+                    }
+                } else {
+                    el.trail.style.width = '0px';
+                }
+
+                // ── Flip: back→front when entering screen, reset when leaving ──
+                const isOnScreen = Math.abs(vx) < ENTER_ZONE;
+
+                if (isOnScreen && !el.onScreen) {
+                    el.onScreen = true;
+                    const flipper = el.flipper;
+                    requestAnimationFrame(() => flipper.classList.add('flipped'));
+                } else if (!isOnScreen && el.onScreen) {
+                    el.onScreen = false;
+                    const flipper = el.flipper;
+                    flipper.style.transition = 'none';
+                    flipper.classList.remove('flipped');
+                    requestAnimationFrame(() => { flipper.style.transition = ''; });
+                }
+            }
+        }
+
+        window.showCardShowcase = () => {
+            if (uploadedPhotos.length === 0 || cardsVisible) return;
+            buildCardSpread();
+            cardsVisible = true;
+            document.getElementById('dim-overlay').classList.add('active');
+            document.getElementById('card-overlay').classList.add('visible');
+        };
+
+        window.hideCardShowcase = () => {
+            if (!cardsVisible) return;
+            if (cardGrabbed) releaseCardGrab();
+            cardsVisible = false;
+            cardElements = [];
+            stillFrames  = 0;
+            accelFrames  = 0;
+            prevZone     = 'safe';
+            document.getElementById('dim-overlay').classList.remove('active');
+            document.getElementById('card-overlay').classList.remove('visible');
+        };
+
+        document.getElementById('add-photo-input').addEventListener('change', function(e) {
+            const files = Array.from(e.target.files);
+            let pending = files.length;
+            files.forEach(file => {
+                const reader = new FileReader();
+                reader.onload = ev => {
+                    const img = new Image();
+                    img.onload = () => {
+                        uploadedPhotos.push({ dataUrl: ev.target.result, isLandscape: img.width > img.height });
+                        if (--pending === 0) { /* photos stored; particles keep init shape */ }
+                    };
+                    img.src = ev.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+            this.value = '';
+        });
+
+        document.getElementById('back-portrait-input').addEventListener('change', function(e) {
+            if (e.target.files[0]) {
+                const reader = new FileReader();
+                reader.onload = ev => { backImagePortrait = ev.target.result; };
+                reader.readAsDataURL(e.target.files[0]);
+            }
+            document.getElementById('back-submenu').classList.remove('open');
+            this.value = '';
+        });
+
+        document.getElementById('back-landscape-input').addEventListener('change', function(e) {
+            if (e.target.files[0]) {
+                const reader = new FileReader();
+                reader.onload = ev => { backImageLandscape = ev.target.result; };
+                reader.readAsDataURL(e.target.files[0]);
+            }
+            document.getElementById('back-submenu').classList.remove('open');
+            this.value = '';
+        });
+
+        init();
+    </script>
+</body>
+</html>

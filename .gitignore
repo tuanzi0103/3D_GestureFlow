@@ -1,0 +1,6 @@
+photos/*
+music/*
+backgraph/*
+!photos/.gitkeep
+!music/.gitkeep
+!backgraph/.gitkeep
