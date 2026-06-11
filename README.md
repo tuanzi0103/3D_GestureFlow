@@ -1,175 +1,67 @@
-# GestureFlow 3D
+# 3D_GestureFlow
 
-> A real-time hand gesture controlled 3D particle interaction system built with Three.js and MediaPipe.
-
-GestureFlow 3D combines particle simulation, computer vision, and immersive interaction into a browser-based experience. Users can manipulate a dynamic particle universe, browse photo cards, and control visual effects entirely through hand gestures captured by a webcam.
-
----
+A 3D particle gesture interaction system built with Three.js + MediaPipe. Features immersive particle effects, photo card browsing, and music playback — all controlled by hand gestures via webcam.
 
 ## Demo
-
-### Particle Universe
-
-![Particle Universe](assets/demo-particles.gif)
-
-### Gesture Interaction
-
-![Gesture Interaction](assets/demo-gesture.gif)
-
-### Photo Card Carousel
-
-![Photo Card Carousel](assets/demo-cards.gif)
-
----
+<img width="648" height="550" alt="image" src="https://github.com/user-attachments/assets/d3eaa561-ec8d-415e-a9f1-ff635b832392" />
+<img width="1490" height="830" alt="image" src="https://github.com/user-attachments/assets/3b34fd85-5572-40c6-a263-73ccdbe7a0d2" />
+<img width="1498" height="908" alt="image" src="https://github.com/user-attachments/assets/5f962be7-252e-4d0c-ab70-a2a8f16caeb6" />
 
 ## Features
 
-### Interactive Particle System
+- Outer layer: heart-shaped 3D particle cloud with bloom glow
+- Inner layer: wind-blown photo particles
+- Photo card carousel: swipe with two fingers, grab to highlight
+- Full gesture control — no mouse or keyboard needed
+- Custom particle emission color
+- Background music player (mp3 / m4a / mp4)
 
-* Heart-shaped 3D particle cloud
-* Bloom glow post-processing
-* Dynamic particle scaling
-* Custom particle emission colors
-* GPU-accelerated rendering with InstancedMesh
+## Gesture Controls
 
-### Gesture Recognition
-
-* Real-time hand tracking using MediaPipe Hands
-* Webcam-based interaction
-* Smooth gesture state detection
-* Fully hands-free control
-
-### Photo Card Experience
-
-* Particle-based photo generation
-* Swipeable photo carousel
-* Card selection and highlighting
-* Dynamic image loading
-
-### Multimedia Support
-
-* Background music playback
-* MP3 / M4A / MP4 support
-* Automatic media discovery in local server mode
-
----
-
-## 🖐 Gesture Controls
-
-| Gesture                        | Action                  |
-| ------------------------------ | ----------------------- |
-| Five fingers open / close      | Scale particle universe |
-| Index finger drag              | Rotate camera view      |
-| Two-finger swipe               | Browse photo cards      |
-| Three-finger pinch             | Select center card      |
-| Five fingers fully open (hold) | Enter card display mode |
-
----
-
-## Project Structure
-
-```text
-GestureFlow 3D
-│
-├── photos/          # Photo card images
-├── music/           # Background music
-├── backgraph/       # Card back images
-│
-├── index.html
-├── server.py
-└── assets/
-    ├── demo-particles.gif
-    ├── demo-gesture.gif
-    └── demo-cards.gif
-```
-
----
-
-## Tech Stack
-
-### Frontend
-
-* Three.js
-* JavaScript (ES6+)
-* Tailwind CSS
-
-### Computer Vision
-
-* MediaPipe Hands
-
-### Graphics
-
-* WebGL
-* InstancedMesh
-* UnrealBloomPass
-
----
+| Gesture | Action |
+|---------|--------|
+| Five fingers open/close | Particle scale |
+| Index finger drag | Rotate view |
+| Two fingers swipe | Browse photo cards |
+| Three fingers pinch | Grab center card |
+| Five fingers fully open (hold) | Show card display |
 
 ## Getting Started
 
-### Option 1 — Local Server (Recommended)
+### Option 1: Local Server (recommended)
 
 Requires Python 3.
 
 ```bash
 git clone https://github.com/tuanzi0103/3D_GestureFlow.git
-
 cd 3D_GestureFlow
-
 python3 server.py
 ```
 
-Open:
+Open `http://localhost:8080` in your browser.
 
-```text
-http://localhost:8080
-```
+Place files in the corresponding folders and they load automatically:
 
----
+| Folder | Content |
+|--------|---------|
+| `photos/` | Photo cards (jpg / png / webp) |
+| `music/` | Background music (mp3 / m4a / mp4) |
+| `backgraph/` | Card back images (portrait or landscape) |
 
-## 📂 Asset Loading
+### Option 2: Open directly
 
-Place assets into the following folders:
+Open `index.html` directly in your browser and use the buttons at the bottom to upload files manually.
 
-| Folder     | Content                 |
-| ---------- | ----------------------- |
-| photos/    | JPG / PNG / WEBP images |
-| music/     | MP3 / M4A / MP4 audio   |
-| backgraph/ | Card background images  |
+> Note: auto-loading from local folders requires the local server.
+> Note: If no images are provided, the photo card system will remain unavailable.
 
-Assets are automatically loaded when the local server starts.
+## Tech Stack
 
-Before using card browsing features:
+- [Three.js](https://threejs.org/) — 3D rendering, particle system, InstancedMesh
+- [MediaPipe Hands](https://mediapipe.dev/) — real-time hand gesture recognition
+- [Tailwind CSS](https://tailwindcss.com/) — UI styling
+- UnrealBloomPass — bloom post-processing
 
-1. Add images to the `photos/` folder when running the local server.
-2. Or upload images manually through the interface after launch.
+## Requirements
 
-If no images are provided, the photo card system will remain unavailable.
-
----
-
-## 🌐 Option 2 — Open Directly
-
-Open `index.html` directly in your browser.
-
-In this mode:
-
-* Photos must be uploaded manually
-* Music files must be uploaded manually
-* Automatic folder scanning is unavailable
-
----
-
-## 💻 Browser Requirements
-
-Recommended browsers:
-
-* Google Chrome (Latest)
-* Microsoft Edge (Latest)
-
-Requirements:
-
-* Webcam permission enabled
-* WebGL supported
-
----
+Chrome or Edge (latest) — webcam permission required for gesture recognition.
