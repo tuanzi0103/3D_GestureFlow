@@ -3,8 +3,10 @@
 A 3D particle gesture interaction system built with Three.js + MediaPipe. Features immersive particle effects, photo card browsing, and music playback — all controlled by hand gestures via webcam.
 
 ## Demo
-<img width="648" height="550" alt="image" src="https://github.com/user-attachments/assets/d3eaa561-ec8d-415e-a9f1-ff635b832392" />
-<img width="1490" height="830" alt="image" src="https://github.com/user-attachments/assets/3b34fd85-5572-40c6-a263-73ccdbe7a0d2" />
+<img width="1460" height="901" alt="image" src="https://github.com/user-attachments/assets/d10e6eba-8436-4f64-a24d-59c578e972b2" />
+
+<img width="1492" height="877" alt="image" src="https://github.com/user-attachments/assets/fd5dd3f2-d1e8-4e20-8a48-69d680bd6a62" />
+
 <img width="1498" height="908" alt="image" src="https://github.com/user-attachments/assets/5f962be7-252e-4d0c-ab70-a2a8f16caeb6" />
 
 ## Features
