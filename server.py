@@ -24,6 +24,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
 
+    def end_headers(self):
+        # Disable all caching so edits to index.html are always visible immediately
+        self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
+        self.send_header('Pragma', 'no-cache')
+        self.send_header('Expires', '0')
+        super().end_headers()
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path == '/api/list':
@@ -83,7 +90,4 @@ if __name__ == '__main__':
     print(f'Press Ctrl+C to stop.\n')
 
     with http.server.ThreadingHTTPServer(('', PORT), Handler) as httpd:
-        try:
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            print('\n已停止服务。')
+        httpd.serve_forever()

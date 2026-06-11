@@ -26,29 +26,51 @@
         #video-element { display: none; }
         
         .glass-panel {
-            background: rgba(10, 10, 20, 0.7);
-            backdrop-filter: blur(16px);
-            -webkit-backdrop-filter: blur(16px);
-            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(255, 255, 255, 0.04);
+            backdrop-filter: blur(20px) saturate(160%);
+            -webkit-backdrop-filter: blur(20px) saturate(160%);
+            border: 1px solid rgba(255, 255, 255, 0.10);
             border-radius: 20px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+            box-shadow:
+                0 2px 0 0 rgba(255,255,255,0.08) inset,  /* 顶部高光 */
+                0 8px 32px rgba(0, 0, 0, 0.45);
         }
 
         .control-btn {
-            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
             position: relative;
             overflow: hidden;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.10);
+            box-shadow:
+                0 1px 0 0 rgba(255,255,255,0.12) inset,
+                0 4px 12px rgba(0,0,0,0.3);
+        }
+        .control-btn::before {
+            /* 顶部光泽条 */
+            content: '';
+            position: absolute;
+            top: 0; left: 10%; right: 10%; height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.25), transparent);
+            border-radius: 50%;
         }
         .control-btn:hover {
-            background: rgba(255, 255, 255, 0.15);
-            transform: translateY(-2px);
-            box-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
+            background: rgba(255,255,255,0.10);
+            border-color: rgba(255,255,255,0.18);
+            transform: translateY(-2px) scale(1.03);
+            box-shadow:
+                0 1px 0 0 rgba(255,255,255,0.18) inset,
+                0 8px 20px rgba(0,0,0,0.35);
+        }
+        .control-btn:active {
+            transform: translateY(0px) scale(0.97);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
         }
         .control-btn.active {
-            background: linear-gradient(135deg, rgba(100, 200, 255, 0.4), rgba(100, 200, 255, 0.1));
-            border: 1px solid rgba(100, 200, 255, 0.5);
-            box-shadow: 0 0 25px rgba(79, 209, 197, 0.3);
-            text-shadow: 0 0 8px rgba(255,255,255,0.8);
+            background: linear-gradient(135deg, rgba(100, 200, 255, 0.18), rgba(100, 200, 255, 0.06));
+            border: 1px solid rgba(100, 200, 255, 0.35);
+            box-shadow: 0 0 20px rgba(79, 209, 197, 0.2), 0 1px 0 0 rgba(255,255,255,0.15) inset;
+            text-shadow: 0 0 8px rgba(255,255,255,0.6);
         }
 
         .loader {
@@ -880,35 +902,43 @@
                         showCardShowcase();
 
                         const midX = (landmarks[8].x + landmarks[12].x) / 2;
-
-                        if (cardGrabbed) {
-                            cardVelocity = 0;
-                            accelFrames  = 0;
-                            prevZone     = 'safe';
+                        if (prevMidX === null) {
+                            prevMidX = midX;
+                            stillFrames = 0;
                         } else {
-                            // ── 安全区：中间 20% (0.4~0.6)；左侧/右侧各 40% ──
-                            const AUTO_BASE  = 5;    // ← 起始速度 (px/frame)，在这里改
-                            const AUTO_MAX   = 80;   // ← 最大速度 (px/frame)，在这里改
-                            const ACCEL_RATE = 0.45; // ← 每帧加速量，越大加速越猛，在这里改
+                            const delta = midX - prevMidX;
+                            const STILL_THRESH = 0.003;
+                            const AUTO_BASE    = 8;       // ← 初始匀速速度 (px/frame)
+                            const AUTO_MAX     = 60;      // ← 最大速度 (px/frame)
+                            const ACCEL_TAU    = 0.03;    // ← 加速曲线参数，越大加速越快，在这里改
 
-                            let zone;
-                            if      (midX < 0.4) zone = 'left';
-                            else if (midX > 0.6) zone = 'right';
-                            else                 zone = 'safe';
+                            // ── 安全区：原中间1/3对称缩小为1/2 → 中间1/6 (5/12~7/12) ──
+                            const IN_SAFE_ZONE = midX >= (5/12) && midX <= (7/12);
 
-                            // 切换区域时重置加速帧数
-                            if (zone !== prevZone) { accelFrames = 0; prevZone = zone; }
-
-                            if (zone === 'safe') {
-                                cardVelocity *= 0.85;   // 安全区：缓慢减速到 0
-                                accelFrames = 0;
+                            // 抓取中锁定速度为 0，跳过所有速度计算
+                            if (cardGrabbed) { cardVelocity = 0; prevMidX = midX; }
+                            else if (Math.abs(delta) > 0.022) {
+                                // 手指明显滑动
+                                const target = -delta * window.innerWidth * 0.4; // ← 滑动灵敏度在这里改
+                                cardVelocity = THREE.MathUtils.lerp(cardVelocity, target, 0.3);
+                                lastSwipeTime = Date.now();
+                            } else if (!IN_SAFE_ZONE) {
+                                // 手指静止在左右区：时间戳方案，不受抖动干扰
+                                const elapsed = Date.now() - lastSwipeTime; // ms since last swipe
+                                if (elapsed > 400) {  // 静止 400ms 后开始加速
+                                    const ramp  = Math.min(1, (elapsed - 400) / 2000); // 2s 内线性加速
+                                    const speed = AUTO_BASE + (AUTO_MAX - AUTO_BASE) * ramp;
+                                    const dir   = midX < 0.5 ? 1 : -1;
+                                    cardVelocity = dir * speed;
+                                }
                             } else {
-                                accelFrames++;
-                                const speed = Math.min(AUTO_BASE + ACCEL_RATE * accelFrames, AUTO_MAX);
-                                cardVelocity = (zone === 'left') ? -speed : speed;
+                                // 手指静止在安全区：停止
+                                lastSwipeTime = Date.now(); // 重置计时器
+                                cardVelocity = 0;
                             }
+                            prevMidX = midX;
+
                         }
-                        prevMidX = midX;
 
                         // ── 抓取手势优先：三指聚拢即触发，不受速度限制 ──
                         if (!cardGrabbed) {
@@ -1226,10 +1256,9 @@
         let   totalCardW   = 0;     // full strip width incl. trailing gap (for infinite wrap)
         let   cardOffset   = 0;     // current pan position (px)
         let   cardVelocity = 0;     // scroll velocity (px/frame, no decay = infinite)
-        let   prevMidX     = null;  // two-finger midpoint X (prev frame)
-        let   stillFrames  = 0;    // consecutive frames fingers haven't moved (for acceleration)
-        let   accelFrames  = 0;    // frames spent in left/right acceleration zone
-        let   prevZone     = 'safe'; // 'left' | 'safe' | 'right'
+        let   prevMidX      = null;  // two-finger midpoint X (prev frame)
+        let   stillFrames   = 0;    // kept for compat
+        let   lastSwipeTime = 0;    // timestamp of last meaningful swipe
         let   cardElements = [];    // cached [{card, flipper, trail, xBase, onScreen, w, _grabbed}]
         let   cardGrabbed    = false;
         let   grabbedCardIdx = -1;
@@ -1289,7 +1318,10 @@
             const n = uploadedPhotos.length;
             if (n === 0) return;
 
-            const PW = 182, PH = 273, LW = 273, LH = 182;
+            // 卡片高度 = 屏幕高度的 1/3，宽度按原始比例 (2:3 竖 / 3:2 横) 推算
+            const BASE_H = Math.round(window.innerHeight / 3);
+            const PH = BASE_H,          PW = Math.round(BASE_H * 2 / 3);   // 竖向 2:3
+            const LH = Math.round(BASE_H * 2 / 3), LW = BASE_H;            // 横向 3:2
 
             // One scrollable track inside the perspective container
             const track = document.createElement('div');
@@ -1441,8 +1473,6 @@
             cardsVisible = false;
             cardElements = [];
             stillFrames  = 0;
-            accelFrames  = 0;
-            prevZone     = 'safe';
             document.getElementById('dim-overlay').classList.remove('active');
             document.getElementById('card-overlay').classList.remove('visible');
         };
